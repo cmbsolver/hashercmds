@@ -2,30 +2,18 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
-	"database/sql"
-	"encoding/hex"
 	"fmt"
-	"io/ioutil"
-	"log"
-	"math/big"
 	"os"
 	"strconv"
 	"sync"
-
-	_ "github.com/lib/pq"
 )
 
 type ProcessQueueItem struct {
-	Id           string
 	HopperString string
 }
 
 func GenerateQueueItem(hopperString []byte) ProcessQueueItem {
-	id := make([]byte, 16)
-	rand.Read(id)
 	return ProcessQueueItem{
-		Id:           hex.EncodeToString(id),
 		HopperString: bytesToCommaSeparatedString(hopperString),
 	}
 }
@@ -43,30 +31,23 @@ func bytesToCommaSeparatedString(b []byte) string {
 
 func (item ProcessQueueItem) GetHopperInsertString() string {
 	var sb bytes.Buffer
-	sb.WriteString(fmt.Sprintf("INSERT INTO public.\"TB_PROCESS_QUEUE\"(\"ID\", \"HOPPER_STRING\") VALUES ('%s', '%s');\n", item.Id, item.HopperString))
+	sb.WriteString(fmt.Sprintf("%s", item.HopperString))
 	return sb.String()
 }
 
 type Program struct {
-	tasks               chan string
-	maxCombinations     *big.Int
-	currentCombinations *big.Int
+	tasks chan string
 }
 
 func NewProgram() *Program {
 	return &Program{
-		tasks:               make(chan string, 1000),
-		maxCombinations:     big.NewInt(0),
-		currentCombinations: big.NewInt(0),
+		tasks: make(chan string, 1000),
 	}
 }
 
 func (p *Program) GenerateAllByteArrays(maxArrayLength int) {
-	p.maxCombinations.Exp(big.NewInt(256), big.NewInt(int64(maxArrayLength)), nil)
-	p.currentCombinations.SetInt64(0)
 	p.GenerateByteArrays(maxArrayLength, 1, nil)
 	close(p.tasks)
-	fmt.Println("\nDone generating byte arrays!\n")
 }
 
 func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, passedArray []byte) {
@@ -86,13 +67,6 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 			}(i)
 		}
 		wg.Wait()
-		p.currentCombinations.Add(p.currentCombinations, big.NewInt(256))
-		p.maxCombinations.Sub(p.maxCombinations, big.NewInt(256))
-
-		if new(big.Int).Mod(p.currentCombinations, big.NewInt(256)).Cmp(big.NewInt(0)) == 0 {
-			fmt.Printf("Generating %d length byte arrays...\n%s Computed\n%s Remaining\n", maxArrayLength, p.currentCombinations.String(), p.maxCombinations.String())
-			os.WriteFile("lasthash.txt", []byte(p.currentCombinations.String()), 0644)
-		}
 	} else {
 		currentArray := make([]byte, currentArrayLevel)
 		if passedArray != nil {
@@ -105,43 +79,11 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 	}
 }
 
-func processTasks(tasks chan string, wg *sync.WaitGroup, db *sql.DB) {
+func processTasks(tasks chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	batchSize := 100
-	var batch []string
-
 	for task := range tasks {
-		batch = append(batch, task)
-		if len(batch) >= batchSize {
-			executeBatch(db, batch)
-			batch = batch[:0]
-		}
-	}
-
-	if len(batch) > 0 {
-		executeBatch(db, batch)
-	}
-}
-
-func executeBatch(db *sql.DB, batch []string) {
-	tx, err := db.Begin()
-	if err != nil {
-		log.Printf("Failed to begin transaction: %v", err)
-		return
-	}
-
-	for _, task := range batch {
-		_, err := tx.Exec(task)
-		if err != nil {
-			log.Printf("Failed to execute task: %v", err)
-			tx.Rollback()
-			return
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		log.Printf("Failed to commit transaction: %v", err)
+		fmt.Println(task)
 	}
 }
 
@@ -152,23 +94,11 @@ func main() {
 	}
 	program := NewProgram()
 
-	connStrBytes, err := ioutil.ReadFile("connStr.txt")
-	if err != nil {
-		log.Fatalf("Failed to read connection string file: %v", err)
-	}
-	connStr := string(connStrBytes)
-
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatalf("Failed to connect to the database: %v", err)
-	}
-	defer db.Close()
-
 	var wg sync.WaitGroup
 	numWorkers := 10
 	wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
-		go processTasks(program.tasks, &wg, db)
+		go processTasks(program.tasks, &wg)
 	}
 
 	program.GenerateAllByteArrays(length)
