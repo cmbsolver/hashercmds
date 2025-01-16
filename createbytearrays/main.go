@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type Program struct {
@@ -49,7 +50,7 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 	}
 }
 
-func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string) {
+func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, totalTasks int) {
 	defer wg.Done()
 
 	// Open the file in append mode
@@ -62,9 +63,24 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string) {
 
 	buffer := make([]byte, 0, 4096) // Buffer for batching writes
 
+	hashCount := 0
+	taskLen := 0
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	go func() {
+		for range ticker.C {
+			fmt.Printf("Hashes per minute: %d, Remaining tasks: %d, Array Size: %d\n", hashCount, totalTasks, taskLen)
+			hashCount = 0
+		}
+	}()
+
 	for task := range tasks {
+		taskLen = len(task)
+		totalTasks = totalTasks - 1
 		hashes := generateHashes(task)
 		for hashName, hash := range hashes {
+			hashCount++
 			if hash == existingHash {
 				// Convert byte array to comma-separated string
 				var taskStr string
@@ -132,8 +148,12 @@ func main() {
 	var wg sync.WaitGroup
 	numWorkers := 10
 	wg.Add(numWorkers)
+
+	// Calculate the total number of tasks
+	totalTasks := 1 << (8 * length) // 256^length
+
 	for i := 0; i < numWorkers; i++ {
-		go processTasks(program.tasks, &wg, existingHash)
+		go processTasks(program.tasks, &wg, existingHash, totalTasks)
 	}
 
 	program.GenerateAllByteArrays(length)
