@@ -2,7 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
+	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/sha3"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"sync"
@@ -79,12 +84,36 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 	}
 }
 
-func processTasks(tasks chan string, wg *sync.WaitGroup) {
+func processTasks(tasks chan string, wg *sync.WaitGroup, existingHash string) {
 	defer wg.Done()
 
 	for task := range tasks {
-		fmt.Println(task)
+		data := []byte(task)
+		hashes := generateHashes(data)
+		for _, hash := range hashes {
+			if hash == existingHash {
+				fmt.Printf("Match found: %s\n", task)
+			}
+		}
 	}
+}
+
+func generateHashes(data []byte) []string {
+	hashes := []string{}
+
+	// SHA-512
+	sha512Hash := sha512.Sum512(data)
+	hashes = append(hashes, hex.EncodeToString(sha512Hash[:]))
+
+	// SHA3-512
+	sha3Hash := sha3.Sum512(data)
+	hashes = append(hashes, hex.EncodeToString(sha3Hash[:]))
+
+	// Blake2b-512
+	blake2bHash := blake2b.Sum512(data)
+	hashes = append(hashes, hex.EncodeToString(blake2bHash[:]))
+
+	return hashes
 }
 
 func main() {
@@ -94,11 +123,19 @@ func main() {
 	}
 	program := NewProgram()
 
+	// Read the existing hash from file
+	existingHashBytes, err := ioutil.ReadFile("existinghash.txt")
+	if err != nil {
+		fmt.Printf("Error reading existing hash: %v\n", err)
+		return
+	}
+	existingHash := string(existingHashBytes)
+
 	var wg sync.WaitGroup
 	numWorkers := 10
 	wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
-		go processTasks(program.tasks, &wg)
+		go processTasks(program.tasks, &wg, existingHash)
 	}
 
 	program.GenerateAllByteArrays(length)
