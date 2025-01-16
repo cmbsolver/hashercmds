@@ -87,31 +87,43 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 func processTasks(tasks chan string, wg *sync.WaitGroup, existingHash string) {
 	defer wg.Done()
 
+	// Open the file in append mode
+	file, err := os.OpenFile("found_hashes.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("Error opening file: %v\n", err)
+		return
+	}
+	defer file.Close()
+
 	for task := range tasks {
 		data := []byte(task)
 		hashes := generateHashes(data)
-		for _, hash := range hashes {
+		for hashName, hash := range hashes {
 			if hash == existingHash {
-				fmt.Printf("Match found: %s\n", task)
+				output := fmt.Sprintf("Match found: %s, Hash Name: %s, Byte Array: %s\n", task, hashName, hex.EncodeToString(data))
+				fmt.Print(output)
+				if _, err := file.WriteString(output); err != nil {
+					fmt.Printf("Error writing to file: %v\n", err)
+				}
 			}
 		}
 	}
 }
 
-func generateHashes(data []byte) []string {
-	hashes := []string{}
+func generateHashes(data []byte) map[string]string {
+	hashes := make(map[string]string)
 
 	// SHA-512
 	sha512Hash := sha512.Sum512(data)
-	hashes = append(hashes, hex.EncodeToString(sha512Hash[:]))
+	hashes["SHA-512"] = hex.EncodeToString(sha512Hash[:])
 
 	// SHA3-512
 	sha3Hash := sha3.Sum512(data)
-	hashes = append(hashes, hex.EncodeToString(sha3Hash[:]))
+	hashes["SHA3-512"] = hex.EncodeToString(sha3Hash[:])
 
 	// Blake2b-512
 	blake2bHash := blake2b.Sum512(data)
-	hashes = append(hashes, hex.EncodeToString(blake2bHash[:]))
+	hashes["Blake2b-512"] = hex.EncodeToString(blake2bHash[:])
 
 	return hashes
 }
