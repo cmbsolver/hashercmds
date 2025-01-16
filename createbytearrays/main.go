@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
@@ -13,40 +12,13 @@ import (
 	"sync"
 )
 
-type ProcessQueueItem struct {
-	HopperString string
-}
-
-func GenerateQueueItem(hopperString []byte) ProcessQueueItem {
-	return ProcessQueueItem{
-		HopperString: bytesToCommaSeparatedString(hopperString),
-	}
-}
-
-func bytesToCommaSeparatedString(b []byte) string {
-	var sb bytes.Buffer
-	for i, v := range b {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf("%d", v))
-	}
-	return sb.String()
-}
-
-func (item ProcessQueueItem) GetHopperInsertString() string {
-	var sb bytes.Buffer
-	sb.WriteString(fmt.Sprintf("%s", item.HopperString))
-	return sb.String()
-}
-
 type Program struct {
-	tasks chan string
+	tasks chan []byte
 }
 
 func NewProgram() *Program {
 	return &Program{
-		tasks: make(chan string, 1000),
+		tasks: make(chan []byte, 1000),
 	}
 }
 
@@ -67,8 +39,7 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 					copy(currentArray, passedArray)
 				}
 				currentArray[currentArrayLevel-1] = byte(i)
-				item := GenerateQueueItem(currentArray)
-				p.tasks <- item.GetHopperInsertString()
+				p.tasks <- currentArray
 			}(i)
 		}
 		wg.Wait()
@@ -84,7 +55,7 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 	}
 }
 
-func processTasks(tasks chan string, wg *sync.WaitGroup, existingHash string) {
+func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string) {
 	defer wg.Done()
 
 	// Open the file in append mode
@@ -96,11 +67,19 @@ func processTasks(tasks chan string, wg *sync.WaitGroup, existingHash string) {
 	defer file.Close()
 
 	for task := range tasks {
-		data := []byte(task)
-		hashes := generateHashes(data)
+		hashes := generateHashes(task)
 		for hashName, hash := range hashes {
 			if hash == existingHash {
-				output := fmt.Sprintf("Match found: %s, Hash Name: %s, Byte Array: %s\n", task, hashName, hex.EncodeToString(data))
+				// Convert byte array to comma-separated string
+				var taskStr string
+				for i, b := range task {
+					if i > 0 {
+						taskStr += ","
+					}
+					taskStr += fmt.Sprintf("%d", b)
+				}
+
+				output := fmt.Sprintf("Match found: %s, Hash Name: %s, Byte Array: %s\n", taskStr, hashName, hex.EncodeToString(task))
 				fmt.Print(output)
 				if _, err := file.WriteString(output); err != nil {
 					fmt.Printf("Error writing to file: %v\n", err)
