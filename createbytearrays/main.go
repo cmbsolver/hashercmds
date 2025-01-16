@@ -18,7 +18,7 @@ type Program struct {
 
 func NewProgram() *Program {
 	return &Program{
-		tasks: make(chan []byte, 1000),
+		tasks: make(chan []byte, 10000), // Increase buffer size
 	}
 }
 
@@ -29,20 +29,14 @@ func (p *Program) GenerateAllByteArrays(maxArrayLength int) {
 
 func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, passedArray []byte) {
 	if currentArrayLevel == maxArrayLength {
-		var wg sync.WaitGroup
-		for i := 0; i < 256; i++ {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				currentArray := make([]byte, currentArrayLevel)
-				if passedArray != nil {
-					copy(currentArray, passedArray)
-				}
-				currentArray[currentArrayLevel-1] = byte(i)
-				p.tasks <- currentArray
-			}(i)
+		currentArray := make([]byte, currentArrayLevel)
+		if passedArray != nil {
+			copy(currentArray, passedArray)
 		}
-		wg.Wait()
+		for i := 0; i < 256; i++ {
+			currentArray[currentArrayLevel-1] = byte(i)
+			p.tasks <- append([]byte(nil), currentArray...) // Send a copy to avoid data race
+		}
 	} else {
 		currentArray := make([]byte, currentArrayLevel)
 		if passedArray != nil {
@@ -66,6 +60,8 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string) {
 	}
 	defer file.Close()
 
+	buffer := make([]byte, 0, 4096) // Buffer for batching writes
+
 	for task := range tasks {
 		hashes := generateHashes(task)
 		for hashName, hash := range hashes {
@@ -81,10 +77,21 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string) {
 
 				output := fmt.Sprintf("Match found: %s, Hash Name: %s, Byte Array: %s\n", taskStr, hashName, hex.EncodeToString(task))
 				fmt.Print(output)
-				if _, err := file.WriteString(output); err != nil {
-					fmt.Printf("Error writing to file: %v\n", err)
+				buffer = append(buffer, output...)
+				if len(buffer) >= 4096 {
+					if _, err := file.Write(buffer); err != nil {
+						fmt.Printf("Error writing to file: %v\n", err)
+					}
+					buffer = buffer[:0]
 				}
 			}
+		}
+	}
+
+	// Write any remaining data in the buffer
+	if len(buffer) > 0 {
+		if _, err := file.Write(buffer); err != nil {
+			fmt.Printf("Error writing to file: %v\n", err)
 		}
 	}
 }
