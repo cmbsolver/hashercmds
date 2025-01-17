@@ -49,7 +49,7 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 	}
 }
 
-func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, totalTasks int) {
+func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, totalTasks int, done chan struct{}) {
 	defer wg.Done()
 
 	// Open the file in append mode
@@ -80,32 +80,42 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, to
 		}
 	}()
 
-	for task := range tasks {
-		taskLen = len(task)
-		totalTasks = totalTasks - 1
-		hashes := generateHashes(task)
-		for hashName, hash := range hashes {
-			hashCount++
-			if hash == existingHash {
-				// Convert byte array to comma-separated string
-				var taskStr string
-				for i, b := range task {
-					if i > 0 {
-						taskStr += ","
+	for {
+		select {
+		case task, ok := <-tasks:
+			if !ok {
+				return
+			}
+			taskLen = len(task)
+			totalTasks = totalTasks - 1
+			hashes := generateHashes(task)
+			for hashName, hash := range hashes {
+				hashCount++
+				if hash == existingHash {
+					// Convert byte array to comma-separated string
+					var taskStr string
+					for i, b := range task {
+						if i > 0 {
+							taskStr += ","
+						}
+						taskStr += fmt.Sprintf("%d", b)
 					}
-					taskStr += fmt.Sprintf("%d", b)
-				}
 
-				output := fmt.Sprintf("Match found: %s, Hash Name: %s, Byte Array: %s\n", taskStr, hashName, hex.EncodeToString(task))
-				fmt.Print(output)
-				buffer = append(buffer, output...)
-				if len(buffer) >= 4096 {
-					if _, err := file.Write(buffer); err != nil {
-						fmt.Printf("Error writing to file: %v\n", err)
+					output := fmt.Sprintf("Match found: %s, Hash Name: %s, Byte Array: %s\n", taskStr, hashName, hex.EncodeToString(task))
+					fmt.Print(output)
+					buffer = append(buffer, output...)
+					if len(buffer) >= 4096 {
+						if _, err := file.Write(buffer); err != nil {
+							fmt.Printf("Error writing to file: %v\n", err)
+						}
+						buffer = buffer[:0]
 					}
-					buffer = buffer[:0]
+					close(done) // Signal all goroutines to stop
+					return
 				}
 			}
+		case <-done:
+			return
 		}
 	}
 
@@ -157,8 +167,10 @@ func main() {
 	// Calculate the total number of tasks
 	totalTasks := 1 << (8 * length) // 256^length
 
+	done := make(chan struct{})
+
 	for i := 0; i < numWorkers; i++ {
-		go processTasks(program.tasks, &wg, existingHash, totalTasks)
+		go processTasks(program.tasks, &wg, existingHash, totalTasks, done)
 	}
 
 	program.GenerateAllByteArrays(length)
