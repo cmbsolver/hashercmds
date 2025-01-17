@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/sha3"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"sync"
@@ -59,7 +58,13 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, to
 		fmt.Printf("Error opening file: %v\n", err)
 		return
 	}
-	defer file.Close()
+
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			fmt.Printf("Error closing file: %v\n", err)
+		}
+	}(file)
 
 	buffer := make([]byte, 0, 4096) // Buffer for batching writes
 
@@ -138,7 +143,7 @@ func main() {
 	program := NewProgram()
 
 	// Read the existing hash from file
-	existingHashBytes, err := ioutil.ReadFile("existinghash.txt")
+	existingHashBytes, err := os.ReadFile("existinghash.txt")
 	if err != nil {
 		fmt.Printf("Error reading existing hash: %v\n", err)
 		return
