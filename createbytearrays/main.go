@@ -74,9 +74,12 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, to
 	defer ticker.Stop()
 
 	go func() {
+		colors := []string{"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m"} // Red, Green, Yellow, Blue, Magenta, Cyan
+		colorIndex := 0
 		for range ticker.C {
-			fmt.Printf("Hashes per minute: %d, Remaining tasks: %d, Array Size: %d\n", hashCount, totalTasks, taskLen)
+			fmt.Printf("%sHashes per minute: %d, Remaining permutations: %d, Array size: %d\033[0m\n", colors[colorIndex], hashCount, totalTasks, taskLen)
 			hashCount = 0
+			colorIndex = (colorIndex + 1) % len(colors)
 		}
 	}()
 
