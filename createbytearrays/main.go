@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/sha3"
+	"math/big"
 	"os"
 	"strconv"
 	"sync"
@@ -49,7 +50,7 @@ func (p *Program) GenerateByteArrays(maxArrayLength, currentArrayLevel int, pass
 	}
 }
 
-func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, totalTasks *int, done chan struct{}) {
+func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, totalTasks *big.Int, totalTasksMutex *sync.Mutex, done chan struct{}, once *sync.Once) {
 	defer wg.Done()
 
 	// Open the file in append mode
@@ -77,7 +78,9 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, to
 		colors := []string{"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m"} // Red, Green, Yellow, Blue, Magenta, Cyan
 		colorIndex := 0
 		for range ticker.C {
-			fmt.Printf("%sHashes per minute: %d, Remaining permutations: %d, Array size: %d\033[0m\n", colors[colorIndex], hashCount, *totalTasks, taskLen)
+			totalTasksMutex.Lock()
+			fmt.Printf("%sHashes per minute: %d, Remaining permutations: %d, Array size: %d\033[0m\n", colors[colorIndex], hashCount, totalTasks, taskLen)
+			totalTasksMutex.Unlock()
 			hashCount = 0
 			colorIndex = (colorIndex + 1) % len(colors)
 		}
@@ -96,7 +99,9 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, to
 				return
 			}
 			taskLen = len(task)
-			*totalTasks = *totalTasks - 1
+			totalTasksMutex.Lock()
+			totalTasks.Sub(totalTasks, big.NewInt(1))
+			totalTasksMutex.Unlock()
 			hashes := generateHashes(task)
 			for hashName, hash := range hashes {
 				hashCount++
@@ -119,7 +124,7 @@ func processTasks(tasks chan []byte, wg *sync.WaitGroup, existingHash string, to
 						}
 						buffer = buffer[:0]
 					}
-					close(done) // Signal all goroutines to stop
+					once.Do(func() { close(done) }) // Signal all goroutines to stop
 					return
 				}
 			}
@@ -167,15 +172,17 @@ func main() {
 	wg.Add(numWorkers)
 
 	// Calculate the total number of tasks
-	totalTasks := 1
+	totalTasks := big.NewInt(1)
 	for i := 0; i < length; i++ {
-		totalTasks *= 256
+		totalTasks.Mul(totalTasks, big.NewInt(256))
 	}
 
 	done := make(chan struct{})
+	var once sync.Once
+	var totalTasksMutex sync.Mutex
 
 	for i := 0; i < numWorkers; i++ {
-		go processTasks(program.tasks, &wg, existingHash, &totalTasks, done)
+		go processTasks(program.tasks, &wg, existingHash, totalTasks, &totalTasksMutex, done, &once)
 	}
 
 	program.GenerateAllByteArrays(length)
